@@ -15,6 +15,34 @@ struct ContentView: View {
     @State var title2: String = ""
 
     var body: some View {
+        RoutedTabView(router: router, selectionType: AppTab.self) {
+            RoutedTab(
+                AppTab.home,
+                title: AppTab.home.description,
+                systemName: AppTab.home.symbol
+            ) {
+                home
+            }
+
+            RoutedTab(
+                AppTab.profile,
+                title: AppTab.profile.description,
+                systemName: AppTab.profile.symbol
+            ) {
+                Text("Profile")
+            }
+
+            RoutedTab(
+                AppTab.setting,
+                title: AppTab.setting.description,
+                systemName: AppTab.setting.symbol
+            ) {
+                Text("Setting")
+            }
+        }
+    }
+
+    var home: some View {
         VStack {
             VStack {
                 Image(systemName: "globe")
@@ -129,6 +157,41 @@ struct MenuView2: View {
     }
 }
 
+protocol TabViewable: CaseIterable, CustomStringConvertible {
+    @ViewBuilder
+    var label: Label<Text, Image> { get }
+}
+
+enum AppTab: Hashable, TabViewable {
+    case home, profile, setting
+
+    var description: String {
+        switch self {
+        case .home:
+            "Home"
+        case .profile:
+            "Profile"
+        case .setting:
+            "Setting"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .home:
+            "house"
+        case .profile:
+            "person"
+        case .setting:
+            "gearshape"
+        }
+    }
+
+    var label: Label<Text, Image> {
+        Label(self.description, systemImage: self.symbol)
+    }
+}
+
 enum SheetStyle {
     case sheet(
         detents: [SheetDetents] = [.medium, .large]
@@ -199,6 +262,7 @@ final class NavigationEngine: NSObject, UINavigationControllerDelegate {
         if let marker {
             markers[vc] = marker
         }
+        vc.hidesBottomBarWhenPushed = false  // <- keeps the tab bar
         navigationController.pushViewController(vc, animated: animated)
     }
 
@@ -297,11 +361,41 @@ final class NavigationEngine: NSObject, UINavigationControllerDelegate {
 @MainActor
 @Observable
 class Router {
+    weak var parent: Router?
+    weak var child: Router?
+
+    private(set) var tabType: Any.Type?
+    private(set) var tabs: [AnyHashable] = []
+    var currentTab: AnyHashable?
+
+    // Reference to internal UITabBarController if this router owns tabs
+    fileprivate weak var tabController: RoutedTabBarController?
+
     private let engine: NavigationEngine
 
     init(engine: NavigationEngine) {
         self.engine = engine
         self.engine.setRouter(self)
+    }
+
+    func registerTabs<T: CaseIterable & Hashable>(for tabsType: T.Type) {
+        self.tabType = tabsType
+        self.tabs = T.allCases.map { $0 }
+        self.currentTab = tabs.first
+    }
+
+    func switchTab<T: Hashable>(_ tab: T) {
+        // If this router owns the tab type, switch
+        if tabType == T.self {
+            currentTab = tab
+        } else {
+            // Otherwise propagate to parent
+            parent?.switchTab(tab)
+        }
+    }
+
+    static func closest(to env: EnvironmentValues) -> Router {
+        env[RouterKey.self]
     }
 
     func push<V: View>(
@@ -420,5 +514,124 @@ struct NavLink<Label: View, Destination: View>: View {
                     destination()
                 }
             }
+    }
+}
+
+// MARK: - RoutedTabView Builder
+
+@resultBuilder
+struct RoutedTabBuilder {
+    static func buildBlock(_ components: RoutedTab...)
+        -> [RoutedTab]
+    {
+        components
+    }
+}
+
+// MARK: - RoutedTabView SwiftUI wrapper
+
+struct RoutedTabView<Selection: Hashable>: View where Selection: CaseIterable {
+    @State private var router: Router
+    let selectionType: Selection.Type
+    let tabs: [RoutedTab]
+
+    init(
+        router: Router,
+        selectionType: Selection.Type,
+        @RoutedTabBuilder content: () -> [RoutedTab]
+    ) {
+        self._router = State(initialValue: router)
+        self.selectionType = selectionType
+        self.tabs = content()
+        router.registerTabs(for: selectionType)
+        router.tabController = nil  // will be set in representable
+    }
+
+    var body: some View {
+        RoutedTabBarControllerRepresentable(
+            router: router,
+            tabs: tabs
+        )
+        .environment(\.router, router)
+    }
+}
+
+// MARK: - Single Tab definition
+
+struct RoutedTab: Identifiable {
+    let id = UUID()
+    let tab: AnyHashable
+    let title: String
+    let systemName: String
+    let content: AnyView
+
+    init<T: View>(
+        _ tab: AnyHashable,
+        title: String,
+        systemName: String,
+        @ViewBuilder content: () -> T
+    ) {
+        self.tab = tab
+        self.title = title
+        self.systemName = systemName
+        self.content = AnyView(content())
+    }
+}
+
+// MARK: - UIKit Tab Controller wrapper
+
+final class RoutedTabBarController: UITabBarController {
+    var router: Router!
+    var tabMap: [AnyHashable: UINavigationController] = [:]
+
+    func `switch`(to tab: AnyHashable?) {
+        guard let tab else { return }
+        if let nav = tabMap[tab] {
+            self.selectedViewController = nav
+        }
+    }
+
+    init(router: Router, tabs: [RoutedTab]) {
+        super.init(nibName: nil, bundle: nil)
+        self.router = router
+        router.tabController = self
+
+        var viewControllers: [UINavigationController] = []
+        for tabItem in tabs {
+            let navController = UINavigationController(
+                rootViewController: UIHostingController(
+                    rootView: tabItem.content
+                )
+            )
+            navController.tabBarItem = UITabBarItem(
+                title: tabItem.title,
+                image: UIImage(systemName: tabItem.systemName),
+                tag: 0
+            )
+            tabMap[tabItem.tab] = navController
+            viewControllers.append(navController)
+        }
+
+        self.setViewControllers(viewControllers, animated: false)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+}
+
+// MARK: - Representable
+
+struct RoutedTabBarControllerRepresentable: UIViewControllerRepresentable {
+    let router: Router
+    let tabs: [RoutedTab]
+
+    func makeUIViewController(context: Context) -> RoutedTabBarController {
+        RoutedTabBarController(router: router, tabs: tabs)
+    }
+
+    func updateUIViewController(
+        _ uiViewController: RoutedTabBarController,
+        context: Context
+    ) {
+        // Could handle dynamic tab changes here if needed
     }
 }
