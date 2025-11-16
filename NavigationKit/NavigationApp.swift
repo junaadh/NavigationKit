@@ -11,10 +11,10 @@ import SwiftUI
 struct NavigationApp: App {
     var body: some Scene {
         WindowGroup {
+//            NavigationStack {
             NavStack {
-                ContentView()
+                RootView()
             }
-            .edgesIgnoringSafeArea(.all)
         }
     }
 }
