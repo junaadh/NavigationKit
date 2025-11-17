@@ -4,19 +4,19 @@ import SwiftUI
 
 struct RootView: View {
     var body: some View {
-        RoutedTabView(
+        TabRouter(
             for: AppTab.self,
             tabs: [
                 //        TabContainer(AppTab.self) {
-                RoutedTab(.home, title: "Home", systemName: "house") {
+                Route(.home, title: "Home", systemName: "house") {
                     HomeScreen()
                 },
 
-                RoutedTab(.profile, title: "Profile", systemName: "person") {
+                Route(.profile, title: "Profile", systemName: "person") {
                     ProfileScreen()
                 },
 
-                RoutedTab(
+                Route(
                     .settings,
                     title: "Settings",
                     systemName: "gearshape"
@@ -33,7 +33,7 @@ enum AppTab: Hashable, CaseIterable {
 }
 
 #Preview {
-    NavStack {
+    RouterView {
         RootView()
     }
 }
@@ -64,13 +64,13 @@ struct HomeScreen: View {
                 .foregroundColor(.secondary)
 
             // Using NavigationLink
-            NavLink("Edit Username", systemImage: "pencil") {
+            RouterLink("Edit Username", systemImage: "pencil") {
                 EditUsernameScreen(username: $username)
             }
 
             // Using manual push
             Button("Push Details") {
-                router.push {
+                router.push(marker: "detail") {
                     DetailScreen(count: count)
                 }
             }
@@ -134,7 +134,7 @@ struct DetailScreen: View {
             Text("Count from previous screen: \(count)")
 
             Button("Push Another") {
-                router.push(marker: "detail") {
+                router.push {
                     ThirdScreen()
                 }
             }
@@ -186,7 +186,7 @@ struct SheetContent: View {
             .buttonStyle(.borderedProminent)
 
             Button("Show Full Screen") {
-                router.presentSheet(style: .fullScreenCover) {
+                router.presentFullScreen {
                     FullScreenContent()
                 }
             }
