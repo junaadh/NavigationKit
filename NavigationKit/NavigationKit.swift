@@ -50,10 +50,10 @@ final class NavigationCoordinator {
         engine.setRootView(rootWithRouter)
     }
 
-    func registerTabs<Selection: Hashable & CaseIterable>(
+    func registerTabs<Selection: Hashable>(
         _ selectionType: Selection.Type,
         style: TabBarStyle,
-        tabs: [RoutedTab]
+        tabs: [RoutedTab<Selection>]
     ) {
         print("Coordinator.registerTabs called")
         router.registerTabs(for: selectionType, style: style, content: tabs)
@@ -88,8 +88,7 @@ public struct NavStack<Root: View>: View {
 final class Router {
     fileprivate weak var engine: NavigationEngine?
 
-    private(set) var tabType: Any.Type?
-    private(set) var tabs: [AnyHashable] = []
+    private var tabsContainer: AnyTabsContainer?
     var currentTab: AnyHashable?
 
     // Track environment values to propagate
@@ -100,28 +99,33 @@ final class Router {
         engine.setRouter(self)
     }
 
-    func registerTabs<T: CaseIterable & Hashable>(
+    func registerTabs<T: Hashable>(
         for tabsType: T.Type,
         style: TabBarStyle = .system,
-        content: [RoutedTab]
+        content: [RoutedTab<T>]
     ) {
         print("Router.registerTabs called with type: \(tabsType)")
-        self.tabType = tabsType
-        self.tabs = content.map { $0.tab }
-        self.currentTab = self.tabs.first
+        self.tabsContainer = TabsContainer(tabs: content)
+        self.currentTab = content.first?.tab
         print(
-            "Router configured - tabType: \(String(describing: self.tabType)), tabs: \(self.tabs.count)"
+            "Router configured - tabs: \(content.count)"
         )
         engine?.registerTabs(content, style: style, router: self)
     }
 
     func switchTab<T: Hashable>(_ tab: T) {
-        guard tabType == T.self else {
+        guard let container = tabsContainer as? TabsContainer<T> else {
             print(
-                "Warning: Trying to switch to tab of type \(T.self) but router is configured for \(String(describing: tabType))"
+                "Warning: Trying to switch to tab of type \(T.self) but router is configured for different type"
             )
             return
         }
+
+        guard container.tabs.contains(where: { $0.tab == tab }) else {
+            print("Warning: Tab \(tab) not found in registered tabs")
+            return
+        }
+
         currentTab = tab
         engine?.switchTab(to: tab)
     }
@@ -287,7 +291,7 @@ final class NavigationEngine: NSObject, UINavigationControllerDelegate,
         for _ in 0...(currentNav.viewControllers.count - idx!) - 1 {
             currentNav.popViewController(animated: true)
         }
-//        currentNav.popToViewController(target, animated: true)
+        //        currentNav.popToViewController(target, animated: true)
     }
 
     func presentSheet<V: View>(
@@ -329,7 +333,11 @@ final class NavigationEngine: NSObject, UINavigationControllerDelegate,
         return top
     }
 
-    func registerTabs(_ tabs: [RoutedTab], style: TabBarStyle, router: Router) {
+    func registerTabs<S: Hashable>(
+        _ tabs: [RoutedTab<S>],
+        style: TabBarStyle,
+        router: Router
+    ) {
         guard tabHost == nil else { return }
         let host = TabHostController(tabs: tabs, style: style, router: router)
         host.delegate = self
@@ -381,16 +389,16 @@ public protocol UIKitTabBarProvider {
 }
 
 // ---------- RoutedTab ----------
-public struct RoutedTab: Identifiable {
+public struct RoutedTab<S: Hashable>: Identifiable {
     public let id = UUID()
-    public let tab: AnyHashable
+    public let tab: S
     public let title: String
     public let systemName: String
     // Store the builder and create UIHostingController directly
     private let makeHostingController: (Router) -> UIViewController
 
     public init<T: View>(
-        _ tab: AnyHashable,
+        _ tab: S,
         title: String,
         systemName: String,
         @ViewBuilder content: @escaping () -> T
@@ -422,7 +430,8 @@ final class TabHostController: UITabBarController {
         selectedViewController as? UINavigationController
     }
 
-    init(tabs: [RoutedTab], style: TabBarStyle, router: Router) {
+    init<S: Hashable>(tabs: [RoutedTab<S>], style: TabBarStyle, router: Router)
+    {
         self.style = style
         self.router = router
         super.init(nibName: nil, bundle: nil)
@@ -538,12 +547,22 @@ public struct RoutedTabView<Selection: Hashable & CaseIterable>: View {
 
     private let selectionType: Selection.Type
     private let style: TabBarStyle
-    private let content: () -> [RoutedTab]
+    private let content: [RoutedTab<Selection>]
 
     public init(
         for selectionType: Selection.Type,
         style: TabBarStyle = .system,
-        @RoutedTabBuilder content: @escaping () -> [RoutedTab]
+        @RoutedTabBuilder content: @escaping () -> [RoutedTab<Selection>]
+    ) {
+        self.selectionType = selectionType
+        self.style = style
+        self.content = content()
+    }
+
+    public init(
+        for selectionType: Selection.Type,
+        style: TabBarStyle = .system,
+        tabs content: [RoutedTab<Selection>]
     ) {
         self.selectionType = selectionType
         self.style = style
@@ -559,7 +578,7 @@ public struct RoutedTabView<Selection: Hashable & CaseIterable>: View {
                     )
                     return
                 }
-                coord.registerTabs(selectionType, style: style, tabs: content())
+                coord.registerTabs(selectionType, style: style, tabs: content)
             }
             .frame(width: 0, height: 0)
     }
@@ -568,7 +587,9 @@ public struct RoutedTabView<Selection: Hashable & CaseIterable>: View {
 // ---------- Result builder for RoutedTab ----------
 @resultBuilder
 public struct RoutedTabBuilder {
-    public static func buildBlock(_ components: RoutedTab...) -> [RoutedTab] {
+    public static func buildBlock<S>(_ components: RoutedTab<S>...)
+        -> [RoutedTab<S>]
+    {
         components
     }
 }
@@ -606,4 +627,13 @@ public struct NavLink<Label: View, Destination: View>: View {
             label()
         }
     }
+}
+
+// ---------- Tab Container ----------
+private protocol AnyTabsContainer {
+    // Empty protocol for type erasure
+}
+
+private struct TabsContainer<T: Hashable>: AnyTabsContainer {
+    let tabs: [RoutedTab<T>]
 }

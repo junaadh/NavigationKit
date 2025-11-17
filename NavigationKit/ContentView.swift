@@ -4,24 +4,27 @@ import SwiftUI
 
 struct RootView: View {
     var body: some View {
-        RoutedTabView(for: AppTab.self) {
-            //        TabContainer(AppTab.self) {
-            RoutedTab(AppTab.home, title: "Home", systemName: "house") {
-                HomeScreen()
-            }
+        RoutedTabView(
+            for: AppTab.self,
+            tabs: [
+                //        TabContainer(AppTab.self) {
+                RoutedTab(.home, title: "Home", systemName: "house") {
+                    HomeScreen()
+                },
 
-            RoutedTab(AppTab.profile, title: "Profile", systemName: "person") {
-                ProfileScreen()
-            }
+                RoutedTab(.profile, title: "Profile", systemName: "person") {
+                    ProfileScreen()
+                },
 
-            RoutedTab(
-                AppTab.settings,
-                title: "Settings",
-                systemName: "gearshape"
-            ) {
-                SettingsScreen()
-            }
-        }
+                RoutedTab(
+                    .settings,
+                    title: "Settings",
+                    systemName: "gearshape"
+                ) {
+                    SettingsScreen()
+                },
+            ]
+        )
     }
 }
 
